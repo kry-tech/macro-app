@@ -34,7 +34,7 @@ class FloatingService : Service() {
     private var clickView: Button? = null
     private var macroAtivo = false
 
-    // Posições iniciais
+    // Posições para arrasto
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
@@ -44,7 +44,7 @@ class FloatingService : Service() {
     // Tamanhos
     private val bubbleSize by lazy { 60.dpToPx() }
     private val menuWidth by lazy { 200.dpToPx() }
-    private val menuHeight by lazy { 60.dpToPx() }  // apenas um botão, altura reduzida
+    private val menuHeight by lazy { 60.dpToPx() }
     private val margin by lazy { 8.dpToPx() }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -69,12 +69,7 @@ class FloatingService : Service() {
             layoutParams = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
                 gravity = Gravity.TOP or Gravity.START
             }
-            setOnClickListener {
-                // Alterna visibilidade do menu
-                menuView?.let { menu ->
-                    menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                }
-            }
+            // ATENÇÃO: Não usar setOnClickListener. O clique será tratado no OnTouchListener.
             setOnTouchListener { _, event -> handleBubbleTouch(event) }
         }
 
@@ -147,6 +142,7 @@ class FloatingService : Service() {
                 val deltaX = event.rawX - initialTouchX
                 val deltaY = event.rawY - initialTouchY
                 if (!isDragging && (abs(deltaX) > 10 || abs(deltaY) > 10)) {
+                    // Começou a arrastar → fecha menu e marca arrasto
                     menuView?.visibility = View.GONE
                     isDragging = true
                 }
@@ -158,6 +154,12 @@ class FloatingService : Service() {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!isDragging) {
+                    // Foi um clique curto → alterna menu
+                    menuView?.let { menu ->
+                        menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    }
+                }
                 return true
             }
         }
@@ -177,21 +179,18 @@ class FloatingService : Service() {
             setOnClickListener {
                 val ativo = clickView?.isEnabled ?: false
                 if (ativo) {
-                    // Desativa
                     clickView?.isEnabled = false
                     clickView?.setBackgroundColor(0xFF888888.toInt())
                     text = "DISPARO (OFF)"
                     setBackgroundColor(0xFFFF0000.toInt())
                 } else {
-                    // Ativa
                     clickView?.isEnabled = true
-                    clickView?.setBackgroundColor(0xFF4CAF50.toInt()) // verde = ativo
+                    clickView?.setBackgroundColor(0xFF4CAF50.toInt())
                     text = "DISPARO (ON)"
                     setBackgroundColor(0xFF00FF00.toInt())
                     Toast.makeText(this@FloatingService, "Clique habilitado! Arraste o botão CLIQUE e toque nele para simular.", Toast.LENGTH_SHORT).show()
                 }
             }
-            // Arrastável
             setOnTouchListener { _, event -> handleDragDisparo(event) }
         }
         addOverlayView(disparoView!!, 300, 300, 150, 100)
@@ -200,15 +199,13 @@ class FloatingService : Service() {
         clickView = Button(this).apply {
             text = "CLIQUE"
             isEnabled = false
-            setBackgroundColor(0xFF888888.toInt()) // cinza = desabilitado
+            setBackgroundColor(0xFF888888.toInt()) // cinza
             setOnClickListener {
                 if (isEnabled) {
-                    // Simular clique (apenas visual)
                     Toast.makeText(this@FloatingService, "Clique simulado na posição do botão!", Toast.LENGTH_SHORT).show()
-                    // Aqui entraria a lógica real (ex.: acessibilidade)
+                    // Lógica real de automação entraria aqui
                 }
             }
-            // Arrastável
             setOnTouchListener { _, event -> handleDragClick(event) }
         }
         addOverlayView(clickView!!, 500, 500, 150, 100)
@@ -255,17 +252,17 @@ class FloatingService : Service() {
     private fun handleDragDisparo(event: MotionEvent): Boolean {
         val view = disparoView ?: return false
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
-        return handleDrag(event, params)
+        return handleDrag(event, params, view)
     }
 
     // Arrasto para o botão CLIQUE
     private fun handleDragClick(event: MotionEvent): Boolean {
         val view = clickView ?: return false
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
-        return handleDrag(event, params)
+        return handleDrag(event, params, view)
     }
 
-    private fun handleDrag(event: MotionEvent, params: WindowManager.LayoutParams): Boolean {
+    private fun handleDrag(event: MotionEvent, params: WindowManager.LayoutParams, view: View): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 initialX = params.x
@@ -280,10 +277,7 @@ class FloatingService : Service() {
                 if (abs(deltaX) > 5 || abs(deltaY) > 5) {
                     params.x = initialX + deltaX.toInt()
                     params.y = initialY + deltaY.toInt()
-                    windowManager.updateViewLayout(
-                        if (params == disparoView?.layoutParams) disparoView else clickView,
-                        params
-                    )
+                    windowManager.updateViewLayout(view, params)
                 }
                 return true
             }
@@ -292,7 +286,6 @@ class FloatingService : Service() {
         return false
     }
 
-    // ---------- LIMPEZA ----------
     override fun onDestroy() {
         super.onDestroy()
         mainContainer?.let { windowManager.removeView(it) }
