@@ -20,6 +20,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
 import kotlin.math.max
@@ -38,7 +39,6 @@ class FloatingService : Service() {
     private var isDragging = false
     private var isHidden = false
 
-    // Margens seguras (em pixels) para evitar barras do sistema
     private var statusBarHeight = 0
     private var navigationBarHeight = 0
 
@@ -63,7 +63,17 @@ class FloatingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (bubbleView.parent == null) {
-            windowManager.addView(bubbleView, layoutParams)
+            try {
+                windowManager.addView(bubbleView, layoutParams)
+            } catch (e: SecurityException) {
+                Toast.makeText(
+                    this,
+                    "Permissão de sobreposição não concedida. A bolha não pode aparecer.",
+                    Toast.LENGTH_LONG
+                ).show()
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
         return START_STICKY
     }
@@ -92,7 +102,7 @@ class FloatingService : Service() {
                 "Bolha flutuante",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Canal para manter o serviço da bolha ativo"
+                description = "Canal para manter a bolha ativa"
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -101,7 +111,7 @@ class FloatingService : Service() {
 
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle("Bolha ativa")
-        .setContentText("Toque para abrir o app")
+        .setContentText("Toque na bolha para abrir o app")
         .setSmallIcon(android.R.drawable.ic_dialog_info)
         .setOngoing(true)
         .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -145,7 +155,6 @@ class FloatingService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Posição inicial segura (canto inferior direito, acima da barra de navegação)
             val displayWidth = this@FloatingService.resources.displayMetrics.widthPixels
             val displayHeight = this@FloatingService.resources.displayMetrics.heightPixels
             x = displayWidth - size
@@ -179,7 +188,6 @@ class FloatingService : Service() {
                 if (isDragging) {
                     val newX = initialX + deltaX.toInt()
                     val newY = initialY + deltaY.toInt()
-                    // Aplica limites seguros
                     layoutParams.x = clampX(newX)
                     layoutParams.y = clampY(newY)
                     windowManager.updateViewLayout(bubbleView, layoutParams)
@@ -210,16 +218,17 @@ class FloatingService : Service() {
     }
 
     private fun openApp() {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
         if (intent != null) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         }
     }
 
     private fun resetIdleTimer() {
         hideHandler.removeCallbacks(hideRunnable)
-        hideHandler.postDelayed(hideRunnable, 5000) // 5 segundos
+        hideHandler.postDelayed(hideRunnable, 5000)
     }
 
     private fun hideBubbleHalf() {
@@ -270,7 +279,6 @@ class FloatingService : Service() {
         var targetX = clampX(layoutParams.x)
         var targetY = clampY(layoutParams.y)
 
-        // Se ainda estiver parcialmente fora, move para a posição totalmente visível mais próxima
         val viewWidth = bubbleView.width
         val viewHeight = bubbleView.height
         if (targetX < 0) targetX = 0

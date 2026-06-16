@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,9 +19,14 @@ class MainActivity : ComponentActivity() {
 
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            // Após o usuário voltar da tela de permissão, tentamos iniciar o serviço novamente
             if (Settings.canDrawOverlays(this)) {
                 startFloatingService()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Permissão de sobreposição negada. A bolha não pode ser iniciada.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
 
@@ -57,7 +63,6 @@ class MainActivity : ComponentActivity() {
 
     private fun checkOverlayPermissionAndStart() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            // Solicita permissão para sobreposição
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")
@@ -75,5 +80,7 @@ class MainActivity : ComponentActivity() {
         } else {
             startService(intent)
         }
+        // Move a Activity para segundo plano (opcional – comente se quiser que continue aberta)
+        moveTaskToBack(true)
     }
 }
