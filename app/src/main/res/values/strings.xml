@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MacroApp</string>
+    <string name="accessibility_service_description">Permite que o MacroApp execute cliques automatizados. Ative para usar o DISPARO.</string>
 </resources>
