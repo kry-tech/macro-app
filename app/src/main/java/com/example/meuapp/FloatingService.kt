@@ -3,7 +3,11 @@ package com.example.meuapp
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -16,7 +20,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import androidx.core.app.NotificationCompat
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 class FloatingService : Service() {
 
@@ -31,14 +38,26 @@ class FloatingService : Service() {
     private var isDragging = false
     private var isHidden = false
 
+    // Margens seguras (em pixels) para evitar barras do sistema
+    private var statusBarHeight = 0
+    private var navigationBarHeight = 0
+
     private val hideHandler = Handler(Looper.getMainLooper())
     private val hideRunnable = Runnable { hideBubbleHalf() }
+
+    companion object {
+        const val CHANNEL_ID = "floating_bubble_channel"
+        const val NOTIFICATION_ID = 101
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        calculateSystemBarHeights()
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification())
         createBubbleView()
     }
 
@@ -55,7 +74,48 @@ class FloatingService : Service() {
             windowManager.removeView(bubbleView)
         }
         hideHandler.removeCallbacks(hideRunnable)
+        stopForeground(true)
     }
+
+    private fun calculateSystemBarHeights() {
+        val resourceIdStatus = resources.getIdentifier("status_bar_height", "dimen", "android")
+        statusBarHeight = if (resourceIdStatus > 0) resources.getDimensionPixelSize(resourceIdStatus) else 0
+
+        val resourceIdNavigation = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        navigationBarHeight = if (resourceIdNavigation > 0) resources.getDimensionPixelSize(resourceIdNavigation) else 0
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Bolha flutuante",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Canal para manter o serviço da bolha ativo"
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("Bolha ativa")
+        .setContentText("Toque para abrir o app")
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setOngoing(true)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .setContentIntent(
+            PendingIntent.getActivity(
+                this,
+                0,
+                packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        )
+        .build()
 
     private fun createBubbleView() {
         val size = 60.dpToPx()
@@ -69,22 +129,27 @@ class FloatingService : Service() {
             setOnTouchListener { _, event -> handleTouch(event) }
         }
 
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
         layoutParams = WindowManager.LayoutParams(
             size,
             size,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
+            type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Usa this@FloatingService para acessar o contexto do serviço
-            x = this@FloatingService.resources.displayMetrics.widthPixels - size
-            y = this@FloatingService.resources.displayMetrics.heightPixels - size
+            // Posição inicial segura (canto inferior direito, acima da barra de navegação)
+            val displayWidth = this@FloatingService.resources.displayMetrics.widthPixels
+            val displayHeight = this@FloatingService.resources.displayMetrics.heightPixels
+            x = displayWidth - size
+            y = max(statusBarHeight, displayHeight - navigationBarHeight - size)
         }
     }
 
@@ -112,8 +177,11 @@ class FloatingService : Service() {
                     isDragging = true
                 }
                 if (isDragging) {
-                    layoutParams.x = initialX + deltaX.toInt()
-                    layoutParams.y = initialY + deltaY.toInt()
+                    val newX = initialX + deltaX.toInt()
+                    val newY = initialY + deltaY.toInt()
+                    // Aplica limites seguros
+                    layoutParams.x = clampX(newX)
+                    layoutParams.y = clampY(newY)
                     windowManager.updateViewLayout(bubbleView, layoutParams)
                 }
                 return true
@@ -130,6 +198,17 @@ class FloatingService : Service() {
         return false
     }
 
+    private fun clampX(value: Int): Int {
+        val viewWidth = bubbleView.width
+        return value.coerceIn(0, resources.displayMetrics.widthPixels - viewWidth)
+    }
+
+    private fun clampY(value: Int): Int {
+        val viewHeight = bubbleView.height
+        val maxY = resources.displayMetrics.heightPixels - navigationBarHeight - viewHeight
+        return value.coerceIn(statusBarHeight, maxY)
+    }
+
     private fun openApp() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
         if (intent != null) {
@@ -140,7 +219,7 @@ class FloatingService : Service() {
 
     private fun resetIdleTimer() {
         hideHandler.removeCallbacks(hideRunnable)
-        hideHandler.postDelayed(hideRunnable, 5000)
+        hideHandler.postDelayed(hideRunnable, 5000) // 5 segundos
     }
 
     private fun hideBubbleHalf() {
@@ -148,7 +227,6 @@ class FloatingService : Service() {
         isHidden = true
 
         val screenWidth = resources.displayMetrics.widthPixels
-        val screenHeight = resources.displayMetrics.heightPixels
         val viewWidth = bubbleView.width
         val viewHeight = bubbleView.height
 
@@ -157,8 +235,8 @@ class FloatingService : Service() {
 
         val distLeft = centerX
         val distRight = screenWidth - centerX
-        val distTop = centerY
-        val distBottom = screenHeight - centerY
+        val distTop = centerY - statusBarHeight
+        val distBottom = (resources.displayMetrics.heightPixels - navigationBarHeight) - centerY
 
         val targetX: Int
         val targetY: Int
@@ -172,14 +250,14 @@ class FloatingService : Service() {
             } else {
                 targetX = screenWidth - viewWidth / 2
             }
-            targetY = layoutParams.y
+            targetY = clampY(layoutParams.y)
         } else {
             if (distTop < distBottom) {
-                targetY = -viewHeight / 2
+                targetY = statusBarHeight - viewHeight / 2
             } else {
-                targetY = screenHeight - viewHeight / 2
+                targetY = resources.displayMetrics.heightPixels - navigationBarHeight - viewHeight / 2
             }
-            targetX = layoutParams.x
+            targetX = clampX(layoutParams.x)
         }
 
         animateBubble(targetX, targetY)
@@ -189,24 +267,18 @@ class FloatingService : Service() {
         if (!isHidden) return
         isHidden = false
 
-        val screenWidth = resources.displayMetrics.widthPixels
-        val screenHeight = resources.displayMetrics.heightPixels
+        var targetX = clampX(layoutParams.x)
+        var targetY = clampY(layoutParams.y)
+
+        // Se ainda estiver parcialmente fora, move para a posição totalmente visível mais próxima
         val viewWidth = bubbleView.width
         val viewHeight = bubbleView.height
-
-        var targetX = layoutParams.x
-        var targetY = layoutParams.y
-
-        if (targetX < 0) {
-            targetX = 0
-        } else if (targetX > screenWidth - viewWidth) {
-            targetX = screenWidth - viewWidth
-        }
-        if (targetY < 0) {
-            targetY = 0
-        } else if (targetY > screenHeight - viewHeight) {
-            targetY = screenHeight - viewHeight
-        }
+        if (targetX < 0) targetX = 0
+        if (targetX > resources.displayMetrics.widthPixels - viewWidth)
+            targetX = resources.displayMetrics.widthPixels - viewWidth
+        if (targetY < statusBarHeight) targetY = statusBarHeight
+        if (targetY > resources.displayMetrics.heightPixels - navigationBarHeight - viewHeight)
+            targetY = resources.displayMetrics.heightPixels - navigationBarHeight - viewHeight
 
         animateBubble(targetX, targetY)
     }
@@ -236,16 +308,15 @@ class FloatingService : Service() {
         animY.start()
     }
 
-    // Suporte para animação via propriedades (ObjectAnimator)
     @Suppress("unused")
     fun getBubbleX() = layoutParams.x
     @Suppress("unused")
-    fun setBubbleX(x: Int) { /* atualizado pelo update listener */ }
+    fun setBubbleX(x: Int) { /* atualizado via update listener */ }
 
     @Suppress("unused")
     fun getBubbleY() = layoutParams.y
     @Suppress("unused")
-    fun setBubbleY(y: Int) { /* atualizado pelo update listener */ }
+    fun setBubbleY(y: Int) { /* atualizado via update listener */ }
 
     private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
 }
