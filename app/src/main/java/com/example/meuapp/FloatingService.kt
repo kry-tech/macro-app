@@ -6,6 +6,7 @@ import android.animation.ObjectAnimator
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -15,7 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
-import androidx.core.content.ContextCompat
 import kotlin.math.abs
 
 class FloatingService : Service() {
@@ -82,9 +82,9 @@ class FloatingService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // Posição inicial: canto inferior direito
-            x = context.resources.displayMetrics.widthPixels - size
-            y = context.resources.displayMetrics.heightPixels - size
+            // Usa this@FloatingService para acessar o contexto do serviço
+            x = this@FloatingService.resources.displayMetrics.widthPixels - size
+            y = this@FloatingService.resources.displayMetrics.heightPixels - size
         }
     }
 
@@ -100,7 +100,6 @@ class FloatingService : Service() {
 
                 if (isHidden) {
                     restoreBubble()
-                    // Não inicia drag enquanto a bolha está voltando
                     return true
                 }
                 return true
@@ -122,7 +121,6 @@ class FloatingService : Service() {
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!isDragging) {
-                    // Foi um clique
                     openApp()
                 }
                 resetIdleTimer()
@@ -142,7 +140,7 @@ class FloatingService : Service() {
 
     private fun resetIdleTimer() {
         hideHandler.removeCallbacks(hideRunnable)
-        hideHandler.postDelayed(hideRunnable, 5000) // 5 segundos
+        hideHandler.postDelayed(hideRunnable, 5000)
     }
 
     private fun hideBubbleHalf() {
@@ -154,7 +152,6 @@ class FloatingService : Service() {
         val viewWidth = bubbleView.width
         val viewHeight = bubbleView.height
 
-        // Descobre qual borda está mais próxima
         val centerX = layoutParams.x + viewWidth / 2
         val centerY = layoutParams.y + viewHeight / 2
 
@@ -170,7 +167,6 @@ class FloatingService : Service() {
         val minVertical = minOf(distTop, distBottom)
 
         if (minHorizontal < minVertical) {
-            // Esconde pela lateral
             if (distLeft < distRight) {
                 targetX = -viewWidth / 2
             } else {
@@ -178,7 +174,6 @@ class FloatingService : Service() {
             }
             targetY = layoutParams.y
         } else {
-            // Esconde pela vertical
             if (distTop < distBottom) {
                 targetY = -viewHeight / 2
             } else {
@@ -202,7 +197,6 @@ class FloatingService : Service() {
         var targetX = layoutParams.x
         var targetY = layoutParams.y
 
-        // Verifica se está escondida (metade fora) e reposiciona para ficar completamente visível
         if (targetX < 0) {
             targetX = 0
         } else if (targetX > screenWidth - viewWidth) {
@@ -232,7 +226,6 @@ class FloatingService : Service() {
 
         animX.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) {
-                // Após restaurar, ativa timer novamente
                 if (!isHidden) resetIdleTimer()
             }
         })
@@ -243,16 +236,16 @@ class FloatingService : Service() {
         animY.start()
     }
 
-    // Suporte à animação via setter/getter
+    // Suporte para animação via propriedades (ObjectAnimator)
     @Suppress("unused")
     fun getBubbleX() = layoutParams.x
     @Suppress("unused")
-    fun setBubbleX(x: Int) { /* atualizado via update listener */ }
+    fun setBubbleX(x: Int) { /* atualizado pelo update listener */ }
 
     @Suppress("unused")
     fun getBubbleY() = layoutParams.y
     @Suppress("unused")
-    fun setBubbleY(y: Int) { /* atualizado via update listener */ }
+    fun setBubbleY(y: Int) { /* atualizado pelo update listener */ }
 
     private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
 }
