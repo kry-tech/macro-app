@@ -5,9 +5,7 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -29,17 +27,10 @@ class FloatingService : Service() {
     private var menuView: LinearLayout? = null
     private var menuButton: Button? = null
 
-    // Botões do macro (disparo e clique)
+    // Botões do macro
     private var disparoView: Button? = null
     private var clickView: Button? = null
     private var macroAtivo = false
-
-    // Posições para arrasto
-    private var initialX = 0
-    private var initialY = 0
-    private var initialTouchX = 0f
-    private var initialTouchY = 0f
-    private var isDragging = false
 
     // Tamanhos
     private val bubbleSize by lazy { 60.dpToPx() }
@@ -55,11 +46,10 @@ class FloatingService : Service() {
         criarBolhaPrincipal()
     }
 
-    // ---------- BOLHA PRINCIPAL E MENU ----------
+    // ---------- BOLHA PRINCIPAL ----------
     private fun criarBolhaPrincipal() {
         mainContainer = FrameLayout(this)
 
-        // Ícone da bolha
         bubbleView = ImageView(this).apply {
             val circle = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -69,11 +59,9 @@ class FloatingService : Service() {
             layoutParams = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
                 gravity = Gravity.TOP or Gravity.START
             }
-            // ATENÇÃO: Não usar setOnClickListener. O clique será tratado no OnTouchListener.
             setOnTouchListener { _, event -> handleBubbleTouch(event) }
         }
 
-        // Menu com apenas um botão "MACRO" (ou "REMOVER MACRO")
         menuView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFFFFFFFF.toInt())
@@ -87,11 +75,7 @@ class FloatingService : Service() {
             menuButton = Button(context).apply {
                 text = "MACRO"
                 setOnClickListener {
-                    if (macroAtivo) {
-                        removerBotoesMacro()
-                    } else {
-                        adicionarBotoesMacro()
-                    }
+                    if (macroAtivo) removerBotoesMacro() else adicionarBotoesMacro()
                     menuView?.visibility = View.GONE
                 }
             }
@@ -129,20 +113,24 @@ class FloatingService : Service() {
 
     private fun handleBubbleTouch(event: MotionEvent): Boolean {
         val params = mainContainer?.layoutParams as? WindowManager.LayoutParams ?: return false
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        var isDragging = false
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 initialX = params.x
                 initialY = params.y
                 initialTouchX = event.rawX
                 initialTouchY = event.rawY
-                isDragging = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val deltaX = event.rawX - initialTouchX
                 val deltaY = event.rawY - initialTouchY
                 if (!isDragging && (abs(deltaX) > 10 || abs(deltaY) > 10)) {
-                    // Começou a arrastar → fecha menu e marca arrasto
                     menuView?.visibility = View.GONE
                     isDragging = true
                 }
@@ -153,11 +141,11 @@ class FloatingService : Service() {
                 }
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
                 if (!isDragging) {
-                    // Foi um clique curto → alterna menu
-                    menuView?.let { menu ->
-                        menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    // Clique curto → alterna menu
+                    menuView?.let {
+                        it.visibility = if (it.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                     }
                 }
                 return true
@@ -166,64 +154,98 @@ class FloatingService : Service() {
         return false
     }
 
-    // ---------- BOTÕES DO MACRO ----------
+    // ---------- BOTÕES MACRO ----------
     private fun adicionarBotoesMacro() {
         if (macroAtivo) return
         macroAtivo = true
         menuButton?.text = "REMOVER MACRO"
 
-        // Botão DISPARO (toggle)
+        // DISPARO
         disparoView = Button(this).apply {
-            text = "DISPARO (OFF)"
-            setBackgroundColor(0xFFFF0000.toInt())  // vermelho = desligado
+            text = "DISPARO"
+            setBackgroundColor(0xFFFF0000.toInt())
             setOnClickListener {
-                val ativo = clickView?.isEnabled ?: false
-                if (ativo) {
-                    clickView?.isEnabled = false
-                    clickView?.setBackgroundColor(0xFF888888.toInt())
-                    text = "DISPARO (OFF)"
-                    setBackgroundColor(0xFFFF0000.toInt())
-                } else {
-                    clickView?.isEnabled = true
-                    clickView?.setBackgroundColor(0xFF4CAF50.toInt())
-                    text = "DISPARO (ON)"
-                    setBackgroundColor(0xFF00FF00.toInt())
-                    Toast.makeText(this@FloatingService, "Clique habilitado! Arraste o botão CLIQUE e toque nele para simular.", Toast.LENGTH_SHORT).show()
-                }
+                // Executa o clique na posição do botão CLIQUE
+                dispararCliqueNaPosicaoAlvo()
             }
-            setOnTouchListener { _, event -> handleDragDisparo(event) }
+            setOnTouchListener { view, event ->
+                handleMacroButtonTouch(view, event) { /* nada extra, já tratado no onClick */ }
+            }
         }
-        addOverlayView(disparoView!!, 300, 300, 150, 100)
+        addOverlayView(disparoView!!, 300, 300, 200, 100)
 
-        // Botão CLIQUE (alvo)
+        // CLIQUE (alvo)
         clickView = Button(this).apply {
             text = "CLIQUE"
-            isEnabled = false
-            setBackgroundColor(0xFF888888.toInt()) // cinza
-            setOnClickListener {
-                if (isEnabled) {
-                    Toast.makeText(this@FloatingService, "Clique simulado na posição do botão!", Toast.LENGTH_SHORT).show()
-                    // Lógica real de automação entraria aqui
+            setBackgroundColor(0xFF888888.toInt())
+            setOnTouchListener { view, event ->
+                handleMacroButtonTouch(view, event) {
+                    // Clique curto no alvo apenas mostra feedback (pode ser removido)
+                    Toast.makeText(this@FloatingService, "Alvo posicionado aqui", Toast.LENGTH_SHORT).show()
                 }
             }
-            setOnTouchListener { _, event -> handleDragClick(event) }
         }
-        addOverlayView(clickView!!, 500, 500, 150, 100)
+        addOverlayView(clickView!!, 500, 500, 200, 100)
     }
 
     private fun removerBotoesMacro() {
         if (!macroAtivo) return
         macroAtivo = false
         menuButton?.text = "MACRO"
+        disparoView?.let { windowManager.removeView(it); disparoView = null }
+        clickView?.let { windowManager.removeView(it); clickView = null }
+    }
 
-        disparoView?.let {
-            windowManager.removeView(it)
-            disparoView = null
+    // Lógica de arrasto unificada para botões macro (DISPARO/CLIQUE)
+    private fun handleMacroButtonTouch(view: View, event: MotionEvent, onClick: () -> Unit): Boolean {
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        var isDragging = false
+
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                initialX = params.x
+                initialY = params.y
+                initialTouchX = event.rawX
+                initialTouchY = event.rawY
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val deltaX = event.rawX - initialTouchX
+                val deltaY = event.rawY - initialTouchY
+                if (!isDragging && (abs(deltaX) > 10 || abs(deltaY) > 10)) {
+                    isDragging = true
+                }
+                if (isDragging) {
+                    params.x = initialX + deltaX.toInt()
+                    params.y = initialY + deltaY.toInt()
+                    windowManager.updateViewLayout(view, params)
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!isDragging) {
+                    onClick() // dispara a ação de clique curto
+                }
+                return true
+            }
         }
-        clickView?.let {
-            windowManager.removeView(it)
-            clickView = null
+        return false
+    }
+
+    private fun dispararCliqueNaPosicaoAlvo() {
+        val alvo = clickView ?: run {
+            Toast.makeText(this, "Alvo não está disponível", Toast.LENGTH_SHORT).show()
+            return
         }
+        val params = alvo.layoutParams as? WindowManager.LayoutParams ?: return
+        val x = params.x + alvo.width / 2
+        val y = params.y + alvo.height / 2
+        // Placeholder: aqui entraria a lógica real de automação
+        Toast.makeText(this, "Disparando clique em ($x, $y)", Toast.LENGTH_SHORT).show()
     }
 
     private fun addOverlayView(view: View, x: Int, y: Int, width: Int, height: Int) {
@@ -248,51 +270,10 @@ class FloatingService : Service() {
         windowManager.addView(view, params)
     }
 
-    // Arrasto para o botão DISPARO
-    private fun handleDragDisparo(event: MotionEvent): Boolean {
-        val view = disparoView ?: return false
-        val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
-        return handleDrag(event, params, view)
-    }
-
-    // Arrasto para o botão CLIQUE
-    private fun handleDragClick(event: MotionEvent): Boolean {
-        val view = clickView ?: return false
-        val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
-        return handleDrag(event, params, view)
-    }
-
-    private fun handleDrag(event: MotionEvent, params: WindowManager.LayoutParams, view: View): Boolean {
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                initialX = params.x
-                initialY = params.y
-                initialTouchX = event.rawX
-                initialTouchY = event.rawY
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                val deltaX = event.rawX - initialTouchX
-                val deltaY = event.rawY - initialTouchY
-                if (abs(deltaX) > 5 || abs(deltaY) > 5) {
-                    params.x = initialX + deltaX.toInt()
-                    params.y = initialY + deltaY.toInt()
-                    windowManager.updateViewLayout(view, params)
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP -> return true
-        }
-        return false
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         mainContainer?.let { windowManager.removeView(it) }
         removerBotoesMacro()
-        mainContainer = null
-        bubbleView = null
-        menuView = null
     }
 
     private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
