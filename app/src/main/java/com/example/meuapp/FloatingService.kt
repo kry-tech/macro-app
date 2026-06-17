@@ -32,7 +32,6 @@ class FloatingService : Service() {
     private val triggerViews = mutableMapOf<String, Button>()
 
     // Seletor de coordenadas
-    private var pickerContainer: FrameLayout? = null
     private var pickerTarget: ImageView? = null
     private var pickerConfirmButton: Button? = null
 
@@ -208,11 +207,7 @@ class FloatingService : Service() {
 
     // ---------- SELETOR DE COORDENADAS ----------
     private fun abrirPicker() {
-        if (pickerContainer != null) return
-
-        pickerContainer = FrameLayout(this).apply {
-            setBackgroundColor(0x44000000)
-        }
+        if (pickerTarget != null) return
 
         val targetSize = 100.dpToPx()
         pickerTarget = ImageView(this).apply {
@@ -240,8 +235,10 @@ class FloatingService : Service() {
             text = "CONFIRMAR"
             setBackgroundColor(0xFF4CAF50.toInt())
             setOnClickListener {
-                val x = targetParams.x + pickerTarget!!.width / 2
-                val y = targetParams.y + pickerTarget!!.height / 2
+                val target = pickerTarget ?: return@setOnClickListener
+                val params = target.layoutParams as? WindowManager.LayoutParams ?: return@setOnClickListener
+                val x = params.x + target.width / 2
+                val y = params.y + target.height / 2
                 StepEditorActivity.waitingForCoordinate?.invoke(x, y)
                 fecharPicker()
                 Toast.makeText(this@FloatingService, "Posição capturada ($x, $y)", Toast.LENGTH_SHORT).show()
@@ -260,12 +257,10 @@ class FloatingService : Service() {
             y = 50
         }
 
-        // Adiciona diretamente ao WindowManager
         windowManager.addView(pickerTarget, targetParams)
         windowManager.addView(pickerConfirmButton, confirmParams)
 
-        // Arrasto do alvo
-        pickerTarget.setOnTouchListener { _, event -> handlePickerTargetTouch(event, targetParams) }
+        pickerTarget?.setOnTouchListener { _, event -> handlePickerTargetTouch(event, targetParams) }
     }
 
     private fun handlePickerTargetTouch(event: MotionEvent, params: WindowManager.LayoutParams): Boolean {
@@ -303,7 +298,6 @@ class FloatingService : Service() {
         pickerConfirmButton?.let { windowManager.removeView(it) }
         pickerTarget = null
         pickerConfirmButton = null
-        pickerContainer = null
     }
 
     // ---------- UTILITÁRIOS DE ARRASTO ----------
