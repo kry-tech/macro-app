@@ -30,7 +30,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Editar"
-            android:minWidth="0"
             app:cornerRadius="8dp" />
 
         <com.google.android.material.button.MaterialButton
@@ -39,7 +38,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Apagar"
-            android:minWidth="0"
             app:cornerRadius="8dp"
             app:icon="@android:drawable/ic_delete"
             app:iconGravity="textEnd" />
