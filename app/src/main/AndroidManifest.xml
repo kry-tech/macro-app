@@ -17,6 +17,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".StepEditorActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.Dialog"/>
+
         <service
             android:name=".FloatingService"
             android:exported="false"/>

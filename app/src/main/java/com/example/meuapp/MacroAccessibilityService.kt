@@ -4,9 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.view.accessibility.AccessibilityEvent
 
 class MacroAccessibilityService : AccessibilityService() {
 
@@ -19,7 +16,7 @@ class MacroAccessibilityService : AccessibilityService() {
         instance = this
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {}
 
     override fun onInterrupt() {}
 

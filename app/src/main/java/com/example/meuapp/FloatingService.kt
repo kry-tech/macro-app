@@ -5,7 +5,9 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -21,18 +23,20 @@ class FloatingService : Service() {
 
     private lateinit var windowManager: WindowManager
 
-    // Bolha principal + menu
+    // Bolha principal
     private var mainContainer: FrameLayout? = null
     private var bubbleView: ImageView? = null
     private var menuView: LinearLayout? = null
-    private var menuButton: Button? = null
 
-    // Botões do macro
-    private var disparoView: Button? = null
-    private var clickView: Button? = null
-    private var macroAtivo = false
+    // Botões de gatilho flutuantes
+    private val triggerViews = mutableMapOf<String, Button>()
 
-    // Estado do arrasto
+    // Seletor de coordenadas
+    private var pickerContainer: FrameLayout? = null
+    private var pickerTarget: ImageView? = null
+    private var pickerConfirmButton: Button? = null
+
+    // Estado de arrasto
     private var dragStartX = 0
     private var dragStartY = 0
     private var dragStartTouchX = 0f
@@ -41,8 +45,8 @@ class FloatingService : Service() {
 
     // Tamanhos
     private val bubbleSize by lazy { 60.dpToPx() }
-    private val menuWidth by lazy { 200.dpToPx() }
-    private val menuHeight by lazy { 60.dpToPx() }
+    private val menuWidth by lazy { 220.dpToPx() }
+    private val menuHeight by lazy { 80.dpToPx() }
     private val margin by lazy { 8.dpToPx() }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -51,6 +55,17 @@ class FloatingService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         criarBolhaPrincipal()
+        atualizarBotoesGatilho()
+        MacroManager.listeners.add { atualizarBotoesGatilho() }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        intent?.action?.let { action ->
+            if (action == "START_PICKER") {
+                abrirPicker()
+            }
+        }
+        return START_STICKY
     }
 
     // ---------- BOLHA PRINCIPAL ----------
@@ -79,14 +94,25 @@ class FloatingService : Service() {
                 topMargin = bubbleSize + margin
             }
 
-            menuButton = Button(context).apply {
-                text = "MACRO"
+            val btnEditor = Button(context).apply {
+                text = "Editor"
                 setOnClickListener {
-                    if (macroAtivo) removerBotoesMacro() else adicionarBotoesMacro()
+                    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(launchIntent)
+                    }
                     menuView?.visibility = View.GONE
                 }
             }
-            addView(menuButton!!)
+            val btnFechar = Button(context).apply {
+                text = "Fechar"
+                setOnClickListener {
+                    stopSelf()
+                }
+            }
+            addView(btnEditor)
+            addView(btnFechar)
         }
 
         mainContainer?.addView(bubbleView)
@@ -127,41 +153,141 @@ class FloatingService : Service() {
         }
     }
 
-    // ---------- BOTÕES MACRO ----------
-    private fun adicionarBotoesMacro() {
-        if (macroAtivo) return
-        macroAtivo = true
-        menuButton?.text = "REMOVER MACRO"
-
-        // DISPARO: ao tocar, aciona o clique via acessibilidade
-        disparoView = Button(this).apply {
-            text = "DISPARO"
-            setBackgroundColor(0xFFFF0000.toInt())
-            setOnTouchListener { view, event ->
-                handleMacroTouch(view, event) { dispararCliqueNaPosicaoAlvo() }
+    // ---------- BOTÕES DE GATILHO ----------
+    private fun atualizarBotoesGatilho() {
+        val triggers = MacroManager.getTriggers()
+        // Remove views que não estão mais na lista
+        val idsAtuais = triggers.map { it.id }.toSet()
+        val paraRemover = triggerViews.keys.filter { it !in idsAtuais }
+        paraRemover.forEach { id ->
+            triggerViews[id]?.let { windowManager.removeView(it) }
+            triggerViews.remove(id)
+        }
+        // Adiciona ou atualiza
+        for (trigger in triggers) {
+            if (!triggerViews.containsKey(trigger.id)) {
+                criarBotaoGatilho(trigger)
+            } else {
+                // Atualiza texto se necessário
+                triggerViews[trigger.id]?.text = trigger.name
             }
         }
-        addOverlayView(disparoView!!, 300, 300, 200, 100)
+    }
 
-        // CLIQUE: alvo arrastável
-        clickView = Button(this).apply {
-            text = "CLIQUE"
-            setBackgroundColor(0xFF888888.toInt())
+    private fun criarBotaoGatilho(trigger: MacroManager.Trigger) {
+        val button = Button(this).apply {
+            text = trigger.name
+            setBackgroundColor(0xFF03A9F4.toInt())
             setOnTouchListener { view, event ->
-                handleMacroTouch(view, event) { /* nada */ }
+                handleMacroTouch(view, event) {
+                    executarMacro(trigger)
+                }
             }
         }
-        addOverlayView(clickView!!, 500, 500, 200, 100)
+        addOverlayView(button, 300, 100 * (triggerViews.size + 1), 200, 100)
+        triggerViews[trigger.id] = button
     }
 
-    private fun removerBotoesMacro() {
-        if (!macroAtivo) return
-        macroAtivo = false
-        menuButton?.text = "MACRO"
-        disparoView?.let { windowManager.removeView(it); disparoView = null }
-        clickView?.let { windowManager.removeView(it); clickView = null }
+    private fun executarMacro(trigger: MacroManager.Trigger) {
+        val service = MacroAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, "Serviço de acessibilidade não ativo", Toast.LENGTH_SHORT).show()
+            return
+        }
+        var delayAcc = 0L
+        for (step in trigger.steps) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                when (step.type) {
+                    MacroManager.StepType.CLICK -> service.performClick(step.x, step.y)
+                    MacroManager.StepType.DELAY -> {} // já tratado pelo delay
+                }
+            }, delayAcc)
+            if (step.type == MacroManager.StepType.DELAY) {
+                delayAcc += step.delayMs
+            }
+        }
+        Toast.makeText(this, "Macro '${trigger.name}' iniciada", Toast.LENGTH_SHORT).show()
     }
 
+    // ---------- SELETOR DE COORDENADAS ----------
+    private fun abrirPicker() {
+        if (pickerContainer != null) return
+
+        pickerContainer = FrameLayout(this).apply {
+            setBackgroundColor(0x44000000)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val targetSize = 100.dpToPx()
+        pickerTarget = ImageView(this).apply {
+            val drawable = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFFFF0000.toInt())
+            }
+            setImageDrawable(drawable)
+            layoutParams = FrameLayout.LayoutParams(targetSize, targetSize).apply {
+                gravity = Gravity.TOP or Gravity.START
+            }
+            setOnTouchListener { _, event -> handlePickerTargetTouch(event) }
+        }
+
+        pickerConfirmButton = Button(this).apply {
+            text = "CONFIRMAR"
+            setBackgroundColor(0xFF4CAF50.toInt())
+            setOnClickListener {
+                val params = pickerTarget?.layoutParams as? FrameLayout.LayoutParams ?: return@setOnClickListener
+                val x = params.leftMargin + pickerTarget!!.width / 2
+                val y = params.topMargin + pickerTarget!!.height / 2
+                // Envia para StepEditorActivity
+                StepEditorActivity.waitingForCoordinate?.invoke(x, y)
+                fecharPicker()
+                Toast.makeText(this@FloatingService, "Posição capturada ($x, $y)", Toast.LENGTH_SHORT).show()
+            }
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = 50
+            }
+        }
+
+        pickerContainer?.addView(pickerTarget)
+        pickerContainer?.addView(pickerConfirmButton)
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        windowManager.addView(pickerContainer, params)
+    }
+
+    private fun handlePickerTargetTouch(event: MotionEvent): Boolean {
+        val params = pickerTarget?.layoutParams as? FrameLayout.LayoutParams ?: return false
+        return handleTouch(event, params) { /* clique curto não faz nada */ }
+    }
+
+    private fun fecharPicker() {
+        pickerContainer?.let { windowManager.removeView(it) }
+        pickerContainer = null
+        pickerTarget = null
+        pickerConfirmButton = null
+    }
+
+    // ---------- UTILITÁRIOS DE ARRASTO ----------
     private fun handleMacroTouch(view: View, event: MotionEvent, onClick: () -> Unit): Boolean {
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return false
         return handleTouch(event, params, onClick)
@@ -187,10 +313,10 @@ class FloatingService : Service() {
                     params.x = dragStartX + deltaX.toInt()
                     params.y = dragStartY + deltaY.toInt()
                     windowManager.updateViewLayout(
-                        when {
-                            params == mainContainer?.layoutParams -> mainContainer
-                            params == disparoView?.layoutParams -> disparoView
-                            else -> clickView
+                        when (params) {
+                            mainContainer?.layoutParams -> mainContainer
+                            pickerTarget?.layoutParams -> pickerTarget
+                            else -> triggerViews.values.find { it.layoutParams == params }
                         },
                         params
                     )
@@ -205,24 +331,6 @@ class FloatingService : Service() {
             }
         }
         return false
-    }
-
-    private fun dispararCliqueNaPosicaoAlvo() {
-        val alvo = clickView ?: run {
-            Toast.makeText(this, "Alvo não disponível", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val params = alvo.layoutParams as? WindowManager.LayoutParams ?: return
-        val x = params.x + alvo.width / 2
-        val y = params.y + alvo.height / 2
-
-        val service = MacroAccessibilityService.instance
-        if (service == null) {
-            Toast.makeText(this, "Serviço de acessibilidade não ativo. Ative em Configurações > Acessibilidade > MacroApp.", Toast.LENGTH_LONG).show()
-            return
-        }
-        service.performClick(x, y)
-        Toast.makeText(this, "Clique executado em ($x, $y)", Toast.LENGTH_SHORT).show()
     }
 
     private fun addOverlayView(view: View, x: Int, y: Int, width: Int, height: Int) {
@@ -250,7 +358,8 @@ class FloatingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         mainContainer?.let { windowManager.removeView(it) }
-        removerBotoesMacro()
+        triggerViews.values.forEach { windowManager.removeView(it) }
+        fecharPicker()
     }
 
     private fun Int.dpToPx(): Int = (this * resources.displayMetrics.density).toInt()
