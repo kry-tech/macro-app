@@ -156,19 +156,16 @@ class FloatingService : Service() {
     // ---------- BOTÕES DE GATILHO ----------
     private fun atualizarBotoesGatilho() {
         val triggers = MacroManager.getTriggers()
-        // Remove views que não estão mais na lista
         val idsAtuais = triggers.map { it.id }.toSet()
         val paraRemover = triggerViews.keys.filter { it !in idsAtuais }
         paraRemover.forEach { id ->
             triggerViews[id]?.let { windowManager.removeView(it) }
             triggerViews.remove(id)
         }
-        // Adiciona ou atualiza
         for (trigger in triggers) {
             if (!triggerViews.containsKey(trigger.id)) {
                 criarBotaoGatilho(trigger)
             } else {
-                // Atualiza texto se necessário
                 triggerViews[trigger.id]?.text = trigger.name
             }
         }
@@ -199,7 +196,7 @@ class FloatingService : Service() {
             Handler(Looper.getMainLooper()).postDelayed({
                 when (step.type) {
                     MacroManager.StepType.CLICK -> service.performClick(step.x, step.y)
-                    MacroManager.StepType.DELAY -> {} // já tratado pelo delay
+                    MacroManager.StepType.DELAY -> {}
                 }
             }, delayAcc)
             if (step.type == MacroManager.StepType.DELAY) {
@@ -215,10 +212,6 @@ class FloatingService : Service() {
 
         pickerContainer = FrameLayout(this).apply {
             setBackgroundColor(0x44000000)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
         }
 
         val targetSize = 100.dpToPx()
@@ -228,63 +221,89 @@ class FloatingService : Service() {
                 setColor(0xFFFF0000.toInt())
             }
             setImageDrawable(drawable)
-            layoutParams = FrameLayout.LayoutParams(targetSize, targetSize).apply {
-                gravity = Gravity.TOP or Gravity.START
-            }
-            setOnTouchListener { _, event -> handlePickerTargetTouch(event) }
+        }
+
+        val targetParams = WindowManager.LayoutParams(
+            targetSize,
+            targetSize,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 300
+            y = 300
         }
 
         pickerConfirmButton = Button(this).apply {
             text = "CONFIRMAR"
             setBackgroundColor(0xFF4CAF50.toInt())
             setOnClickListener {
-                val params = pickerTarget?.layoutParams as? FrameLayout.LayoutParams ?: return@setOnClickListener
-                val x = params.leftMargin + pickerTarget!!.width / 2
-                val y = params.topMargin + pickerTarget!!.height / 2
-                // Envia para StepEditorActivity
+                val x = targetParams.x + pickerTarget!!.width / 2
+                val y = targetParams.y + pickerTarget!!.height / 2
                 StepEditorActivity.waitingForCoordinate?.invoke(x, y)
                 fecharPicker()
                 Toast.makeText(this@FloatingService, "Posição capturada ($x, $y)", Toast.LENGTH_SHORT).show()
             }
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = 50
-            }
         }
 
-        pickerContainer?.addView(pickerTarget)
-        pickerContainer?.addView(pickerConfirmButton)
-
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        val confirmParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
-        )
-        windowManager.addView(pickerContainer, params)
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 50
+        }
+
+        // Adiciona diretamente ao WindowManager
+        windowManager.addView(pickerTarget, targetParams)
+        windowManager.addView(pickerConfirmButton, confirmParams)
+
+        // Arrasto do alvo
+        pickerTarget.setOnTouchListener { _, event -> handlePickerTargetTouch(event, targetParams) }
     }
 
-    private fun handlePickerTargetTouch(event: MotionEvent): Boolean {
-        val params = pickerTarget?.layoutParams as? FrameLayout.LayoutParams ?: return false
-        return handleTouch(event, params) { /* clique curto não faz nada */ }
+    private fun handlePickerTargetTouch(event: MotionEvent, params: WindowManager.LayoutParams): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                dragStartX = params.x
+                dragStartY = params.y
+                dragStartTouchX = event.rawX
+                dragStartTouchY = event.rawY
+                dragging = false
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val deltaX = event.rawX - dragStartTouchX
+                val deltaY = event.rawY - dragStartTouchY
+                if (!dragging && (abs(deltaX) > 10 || abs(deltaY) > 10)) {
+                    dragging = true
+                }
+                if (dragging) {
+                    params.x = dragStartX + deltaX.toInt()
+                    params.y = dragStartY + deltaY.toInt()
+                    windowManager.updateViewLayout(pickerTarget, params)
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                return true
+            }
+        }
+        return false
     }
 
     private fun fecharPicker() {
-        pickerContainer?.let { windowManager.removeView(it) }
-        pickerContainer = null
+        pickerTarget?.let { windowManager.removeView(it) }
+        pickerConfirmButton?.let { windowManager.removeView(it) }
         pickerTarget = null
         pickerConfirmButton = null
+        pickerContainer = null
     }
 
     // ---------- UTILITÁRIOS DE ARRASTO ----------
@@ -313,9 +332,8 @@ class FloatingService : Service() {
                     params.x = dragStartX + deltaX.toInt()
                     params.y = dragStartY + deltaY.toInt()
                     windowManager.updateViewLayout(
-                        when (params) {
-                            mainContainer?.layoutParams -> mainContainer
-                            pickerTarget?.layoutParams -> pickerTarget
+                        when {
+                            mainContainer?.layoutParams == params -> mainContainer
                             else -> triggerViews.values.find { it.layoutParams == params }
                         },
                         params

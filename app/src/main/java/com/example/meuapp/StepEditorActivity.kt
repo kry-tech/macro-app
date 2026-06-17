@@ -1,14 +1,12 @@
 package com.example.meuapp
 
-import android.app.Activity
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -18,7 +16,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.textfield.TextInputEditText
-import com.example.meuapp.MacroManager
 
 class StepEditorActivity : AppCompatActivity() {
 
@@ -86,7 +83,7 @@ class StepEditorActivity : AppCompatActivity() {
             }
             val editX = EditText(this).apply {
                 hint = "Coordenada X"
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                inputType = InputType.TYPE_CLASS_NUMBER
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -94,7 +91,7 @@ class StepEditorActivity : AppCompatActivity() {
             }
             val editY = EditText(this).apply {
                 hint = "Coordenada Y"
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                inputType = InputType.TYPE_CLASS_NUMBER
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -136,7 +133,7 @@ class StepEditorActivity : AppCompatActivity() {
         findViewById<View>(R.id.button_add_delay).setOnClickListener {
             val editDelay = EditText(this).apply {
                 hint = "Milissegundos"
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                inputType = InputType.TYPE_CLASS_NUMBER
                 setText("500")
             }
             AlertDialog.Builder(this)
