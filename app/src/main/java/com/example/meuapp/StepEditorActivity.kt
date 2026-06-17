@@ -2,12 +2,15 @@ package com.example.meuapp
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -15,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.textfield.TextInputEditText
+import com.example.meuapp.MacroManager
 
 class StepEditorActivity : AppCompatActivity() {
 
@@ -49,21 +53,19 @@ class StepEditorActivity : AppCompatActivity() {
 
         val recycler = findViewById<RecyclerView>(R.id.recycler_steps)
         stepAdapter = StepAdapter(trigger!!.steps.toMutableList()) { pos ->
-            // abrir picker de coordenada para passo de clique
             val step = trigger!!.steps[pos]
             if (step.type == MacroManager.StepType.CLICK) {
                 // Inicia o picker via FloatingService
-                val intent = android.content.Intent(this, FloatingService::class.java).apply {
+                val intent = Intent(this, FloatingService::class.java).apply {
                     action = "START_PICKER"
                     putExtra("step_index", pos)
                 }
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(intent)
                 } else {
                     startService(intent)
                 }
-                Toast.makeText(this, "Arraste o alvo até a posição desejada e toque em CONFIRMAR", Toast.LENGTH_LONG).show()
-                // Define callback
+                Toast.makeText(this, "Arraste o alvo vermelho e toque em CONFIRMAR", Toast.LENGTH_LONG).show()
                 waitingForCoordinate = { x, y ->
                     val updated = trigger!!.steps.toMutableList()
                     updated[pos] = updated[pos].copy(x = x, y = y)
@@ -78,25 +80,44 @@ class StepEditorActivity : AppCompatActivity() {
         recycler.adapter = stepAdapter
 
         findViewById<View>(R.id.button_add_click).setOnClickListener {
-            val dialogView = layoutInflater.inflate(R.layout.dialog_click_coord, null)
-            val editX = dialogView.findViewById<EditText>(R.id.edit_x)
-            val editY = dialogView.findViewById<EditText>(R.id.edit_y)
+            val linearLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(16, 16, 16, 16)
+            }
+            val editX = EditText(this).apply {
+                hint = "Coordenada X"
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            val editY = EditText(this).apply {
+                hint = "Coordenada Y"
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            linearLayout.addView(editX)
+            linearLayout.addView(editY)
+
             AlertDialog.Builder(this)
                 .setTitle("Coordenadas do clique")
-                .setView(dialogView)
+                .setView(linearLayout)
                 .setPositiveButton("OK") { _, _ ->
                     val x = editX.text.toString().toIntOrNull() ?: 0
                     val y = editY.text.toString().toIntOrNull() ?: 0
                     trigger!!.steps.add(MacroManager.Step(MacroManager.StepType.CLICK, x, y))
                     stepAdapter.notifyItemInserted(trigger!!.steps.size - 1)
                 }
-                .setNeutralButton("Escolher posição") { _, _ ->
-                    // Abre o picker e adiciona passo depois
-                    val intent = android.content.Intent(this, FloatingService::class.java).apply {
+                .setNeutralButton("Escolher na tela") { _, _ ->
+                    val intent = Intent(this, FloatingService::class.java).apply {
                         action = "START_PICKER"
                         putExtra("add_new", true)
                     }
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         startForegroundService(intent)
                     } else {
                         startService(intent)
@@ -106,19 +127,21 @@ class StepEditorActivity : AppCompatActivity() {
                         stepAdapter.notifyItemInserted(trigger!!.steps.size - 1)
                         waitingForCoordinate = null
                     }
-                    Toast.makeText(this, "Posicione o alvo e confirme", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Posicione o alvo vermelho e confirme", Toast.LENGTH_SHORT).show()
                 }
                 .setNegativeButton("Cancelar", null)
                 .show()
         }
 
         findViewById<View>(R.id.button_add_delay).setOnClickListener {
-            val dialogView = layoutInflater.inflate(R.layout.dialog_delay, null)
-            val editDelay = dialogView.findViewById<EditText>(R.id.edit_delay)
-            editDelay.setText("500")
+            val editDelay = EditText(this).apply {
+                hint = "Milissegundos"
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                setText("500")
+            }
             AlertDialog.Builder(this)
                 .setTitle("Tempo de espera (ms)")
-                .setView(dialogView)
+                .setView(editDelay)
                 .setPositiveButton("OK") { _, _ ->
                     val delay = editDelay.text.toString().toLongOrNull() ?: 500L
                     trigger!!.steps.add(MacroManager.Step(MacroManager.StepType.DELAY, delayMs = delay))
